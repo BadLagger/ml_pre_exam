@@ -4,6 +4,11 @@ from PIL import Image
 import pandas as pd
 from torch.utils.data import Dataset
 from torchvision import transforms
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from tqdm import tqdm
+from sklearn.metrics import accuracy_score
 
 log.getLogger("PIL").setLevel(log.CRITICAL)
 
@@ -23,7 +28,7 @@ class LamodaDataset(Dataset):
             image = self.__cache[i]
         else:
             row = self.__df.iloc[i]
-            image = Image.open(row['fname'])
+            image = Image.open(row['fname']).convert('RGB') 
             self.__cache[i] = image
         
         if self.__transform:
@@ -136,4 +141,104 @@ class AnalysData:
         res_df['label'] = res_df['class'].map(class_to_idx)
         res_df = res_df.drop(columns=['class', 'width', 'height'])
         return res_df, class_to_idx
+
+class RSNAModel(nn.Module):
+    def __init__(self, num_classes=2):
+        super(RSNAModel, self).__init__()
+        
+        # Размеры после каждого слоя (пример для входного размера 66x46)
+        self.features = nn.Sequential(
+            nn.Conv2d(3, 32, kernel_size=3, padding=1),  # [32, 66, 46]
+            nn.ReLU(),
+            nn.MaxPool2d(2, 2),                          # [32, 33, 23]
+            
+            nn.Conv2d(32, 64, kernel_size=3, padding=1), # [64, 33, 23]
+            nn.ReLU(),
+            nn.MaxPool2d(2, 2),                          # [64, 16, 11]
+            
+            nn.Conv2d(64, 128, kernel_size=3, padding=1),# [128, 16, 11]
+            nn.ReLU(),
+            nn.MaxPool2d(2, 2),                          # [128, 8, 5]
+        )
+        
+        # Автоматический расчет размера для полносвязного слоя
+        self.fc_input_size = self._get_fc_input_size()
+        
+        self.classifier = nn.Sequential(
+            nn.Linear(self.fc_input_size, 512),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+            nn.Linear(512, num_classes)
+        )
+    
+    def _get_fc_input_size(self):
+        # Пробный проход для определения размера
+        x = torch.zeros(1, 3, 66, 46)  # Ваш размер изображения
+        x = self.features(x)
+        return x.view(1, -1).size(1)
+    
+    def forward(self, x):
+        x = self.features(x)
+        x = x.view(x.size(0), -1)  # Выравниваем с учетом батча
+        x = self.classifier(x)
+        return x
+
+def train_one_epoch(model, train_dataloader, optimizer, loss_fn, epoch, device, log_wandb=True, verbose=False):
+    model.train()
+    running_loss = 0.0
+    preds = []
+    targets = []
+    
+    progress_bar = tqdm(train_dataloader, desc=f'Train Epoch {epoch}', disable=not verbose)
+    
+    for batch_idx, (data, target) in enumerate(progress_bar):
+        data, target = data.to(device), target.to(device)
+        
+        optimizer.zero_grad()
+        output = model(data)
+        loss = loss_fn(output, target)
+        loss.backward()
+        optimizer.step()
+        
+        running_loss += loss.item()
+        preds.extend(torch.argmax(output, dim=1).cpu().numpy())
+        targets.extend(target.cpu().numpy())
+        
+        # Обновление progress bar
+        progress_bar.set_postfix(loss=loss.item())
+    
+    epoch_loss = running_loss / len(train_dataloader)
+    epoch_acc = accuracy_score(targets, preds)
+    
+    if verbose:
+        print(f'Train Epoch {epoch} Loss: {epoch_loss:.4f} Acc: {epoch_acc:.4f}')
+    
+    return epoch_loss, epoch_acc
+
+@torch.no_grad()
+def valid_one_epoch(model, valid_dataloader, loss_fn, epoch, device, log_wandb=True, verbose=False):
+    model.eval()
+    running_loss = 0.0
+    preds = []
+    targets = []
+    
+    progress_bar = tqdm(valid_dataloader, desc=f'Valid Epoch {epoch}', disable=not verbose)
+    
+    for data, target in progress_bar:
+        data, target = data.to(device), target.to(device)
+        
+        output = model(data)
+        loss = loss_fn(output, target)
+        
+        running_loss += loss.item()
+        preds.extend(torch.argmax(output, dim=1).cpu().numpy())
+        targets.extend(target.cpu().numpy())
+    
+    epoch_loss = running_loss / len(valid_dataloader)
+    epoch_acc = accuracy_score(targets, preds)
+    
+    if verbose:
+        print(f'Valid Epoch {epoch} Loss: {epoch_loss:.4f} Acc: {epoch_acc:.4f}')
+    
+    return epoch_loss, epoch_acc
         

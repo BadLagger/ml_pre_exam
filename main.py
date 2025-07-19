@@ -1,13 +1,14 @@
 import sys
 import logging as log
 import os
-from analys import AnalysData, LamodaDataset
+from analys import AnalysData, LamodaDataset, RSNAModel, train_one_epoch, valid_one_epoch
 import pandas as pd
 from sklearn.model_selection._split import train_test_split
 import torchvision
 from torchvision import transforms
 import torch
 import numpy as np
+import torch.nn as nn
 
 MIN_ARGS_NUM=2
 
@@ -101,6 +102,21 @@ if __name__ == "__main__":
     
     images, labels = next(iter(train_loader))
     out = torchvision.utils.make_grid(images)
-    imshow(out)
+    #imshow(out)
+    
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = RSNAModel(num_classes=2).to(device)
+    
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+    loss_fn = nn.CrossEntropyLoss()
+    
+    for epoch in range(1, 11):  # 10 эпох
+        train_loss, train_acc = train_one_epoch(
+            model, train_loader, optimizer, loss_fn, epoch, device, verbose=True
+        )
+        
+        val_loss, val_acc = valid_one_epoch(
+            model, val_loader, loss_fn, epoch, device, verbose=True
+        )
     
     log.info("End ML lamode")
