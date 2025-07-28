@@ -9,6 +9,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from tqdm import tqdm
 from sklearn.metrics import accuracy_score
+import copy
 
 log.getLogger("PIL").setLevel(log.CRITICAL)
 
@@ -183,6 +184,96 @@ class RSNAModel(nn.Module):
         x = self.classifier(x)
         return x
 
+class Train:
+    def __init__(self, model, train_dataloader, valid_dataloader, optimizer, loss_fn, device):
+        self.__model = model
+        self.__train_dl = train_dataloader
+        self.__val_dl = valid_dataloader
+        self.__optimizer = optimizer
+        self.__loss_fn = loss_fn
+        self.__device = device
+        self.__result_df = pd.DataFrame(columns=["epoch", "train_loss", "train_acc", "valid_loss", "valid_acc"])
+        self.__best_val_acc = 0.0
+        self.__best_model_weights = None
+        self.__best_model_number = 0
+    
+    def train_one_epoch(self, epoch, verbose=False):
+        self.__model.train()
+        running_loss = 0.0
+        preds = []
+        targets = []
+    
+        progress_bar = tqdm(self.__train_dl, desc=f'Train Epoch {epoch}', disable=not verbose)
+        for batch_idx, (data, target) in enumerate(progress_bar):
+            data, target = data.to(self.__device), target.to(self.__device)
+            
+            self.__optimizer.zero_grad()
+            output = self.__model(data)
+            loss = self.__loss_fn(output, target)
+            loss.backward()
+            self.__optimizer.step()
+            
+            running_loss += loss.item()
+            preds.extend(torch.argmax(output, dim=1).cpu().numpy())
+            targets.extend(target.cpu().numpy())
+            
+            # Обновление progress bar
+            progress_bar.set_postfix(loss=loss.item())
+        
+        epoch_loss = running_loss / len(self.__train_dl)
+        epoch_acc = accuracy_score(targets, preds)
+    
+        return epoch_loss, epoch_acc
+    
+    def valid_one_epoch(self, epoch, verbose=False):
+        self.__model.eval()
+        running_loss = 0.0
+        preds = []
+        targets = []
+    
+        progress_bar = tqdm(self.__val_dl, desc=f'Valid Epoch {epoch}', disable=not verbose)
+        
+        for data, target in progress_bar:
+            data, target = data.to(self.__device), target.to(self.__device)
+            
+            output = self.__model(data)
+            loss = self.__loss_fn(output, target)
+            
+            running_loss += loss.item()
+            preds.extend(torch.argmax(output, dim=1).cpu().numpy())
+            targets.extend(target.cpu().numpy())
+        
+        epoch_loss = running_loss / len(self.__val_dl)
+        epoch_acc = accuracy_score(targets, preds)
+        
+        return epoch_loss, epoch_acc
+    
+    def update_result(self, epoch, train_loss, train_acc, valid_loss, valid_acc):
+        new_val = {
+            "epoch": epoch,
+            "train_loss": train_loss,
+            "train_acc": train_acc,
+            "valid_loss": valid_loss,
+            "valid_acc": valid_acc
+            }
+        new_row = pd.DataFrame([new_val])
+        self.__result_df = pd.concat([self.__result_df, new_row], ignore_index=True)
+        if valid_acc > self.__best_val_acc:
+            self.__best_val_acc = valid_acc
+            self.__best_model_weights = copy.deepcopy(self.__model.state_dict())
+            self.__best_model_number = epoch
+    
+    def get_result_df(self):
+        return self.__result_df
+    
+    def get_best_model(self):
+        if self.__best_model_weights is None:
+            return self.__model
+        best_model = copy.deepcopy(self.__model)
+        best_model.load_state_dict(self.__best_model_weights)
+        return (self.__best_model_number, best_model)
+    
+
 def train_one_epoch(model, train_dataloader, optimizer, loss_fn, epoch, device, log_wandb=True, verbose=False):
     model.train()
     running_loss = 0.0
@@ -211,12 +302,14 @@ def train_one_epoch(model, train_dataloader, optimizer, loss_fn, epoch, device, 
     epoch_acc = accuracy_score(targets, preds)
     
     if verbose:
-        print(f'Train Epoch {epoch} Loss: {epoch_loss:.4f} Acc: {epoch_acc:.4f}')
+        msg = f'Train Epoch {epoch} Loss: {epoch_loss:.4f} Acc: {epoch_acc:.4f}'
+        print(msg)
+        save_result_log("train.log", msg)
     
     return epoch_loss, epoch_acc
 
 @torch.no_grad()
-def valid_one_epoch(model, valid_dataloader, loss_fn, epoch, device, log_wandb=True, verbose=False):
+def valid_one_epoch(model, valid_dataloader, loss_fn, epoch, device, verbose=False):
     model.eval()
     running_loss = 0.0
     preds = []
@@ -238,7 +331,9 @@ def valid_one_epoch(model, valid_dataloader, loss_fn, epoch, device, log_wandb=T
     epoch_acc = accuracy_score(targets, preds)
     
     if verbose:
-        print(f'Valid Epoch {epoch} Loss: {epoch_loss:.4f} Acc: {epoch_acc:.4f}')
+        msg = f'Valid Epoch {epoch} Loss: {epoch_loss:.4f} Acc: {epoch_acc:.4f}'
+        print(msg)
+        save_result_log("valid.log", msg)
     
     return epoch_loss, epoch_acc
         

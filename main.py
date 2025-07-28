@@ -1,7 +1,7 @@
 import sys
 import logging as log
 import os
-from analys import AnalysData, LamodaDataset, RSNAModel, train_one_epoch, valid_one_epoch
+from analys import AnalysData, LamodaDataset, RSNAModel, Train
 import pandas as pd
 from sklearn.model_selection._split import train_test_split
 import torchvision
@@ -110,13 +110,17 @@ if __name__ == "__main__":
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
     loss_fn = nn.CrossEntropyLoss()
     
+    train = Train(model, train_loader, val_loader, optimizer, loss_fn, device)
     for epoch in range(1, 11):  # 10 эпох
-        train_loss, train_acc = train_one_epoch(
-            model, train_loader, optimizer, loss_fn, epoch, device, verbose=True
-        )
+        train_loss, train_acc = train.train_one_epoch(epoch, verbose=True)
+        val_loss, val_acc = train.valid_one_epoch(epoch, verbose=True)
+        train.update_result(epoch, train_loss, train_acc, val_loss, val_acc)
         
-        val_loss, val_acc = valid_one_epoch(
-            model, val_loader, loss_fn, epoch, device, verbose=True
-        )
+    print("Result:\n%s" % train.get_result_df())
+    
+    # Сохраняем лучшую модель
+    model_num, best_model = train.get_best_model()
+    print("The best model is: %d" % model_num)
+    torch.save(best_model.state_dict(), "best_model.pth")
     
     log.info("End ML lamode")
