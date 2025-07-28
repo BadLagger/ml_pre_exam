@@ -79,6 +79,28 @@ class AnalysData:
         log.info('Classification done!')
         return self.__total_info
     
+    def justLoadFiles(self):
+        log.info("Just Load files!!")
+        self.__image_data = []
+        self.__total_info = {}
+        self.__total_info['total_count'] = 0
+        self.__total_info['not_jpg'] = 0
+        for img_fname in os.listdir(self.__dir):
+            self.__total_info['total_count'] += 1
+            if not ".jpg" in img_fname:
+                log.error("Not JPG file detected: %s" % img_fname)
+                self.__total_info['not_jpg'] += 1
+                continue
+            current_image_info = {}
+            current_image_info['fname'] = img_fname
+            with Image.open("%s/%s" % (self.__dir, img_fname)) as img:
+                width, height = img.size
+                current_image_info['width'] = width
+                current_image_info['height'] = height
+                self.__image_data.append(current_image_info)
+        return self.__total_info
+
+    
     def makeBackup(self, filename, backup_dir):
         try:
             if os.path.exists("%s/%s" % (backup_dir, filename)):
@@ -116,7 +138,7 @@ class AnalysData:
         
         for img in self.__image_data:
             if width != img['width'] and height != img['height']:
-                log.info("Wrong resolution for file: %s" % img['fname'])
+                log.debug("Wrong resolution for file: %s" % img['fname'])
                 if self.makeBackup(img['fname'], backup_dir) == False:
                     return False
                 
@@ -142,6 +164,13 @@ class AnalysData:
         res_df['label'] = res_df['class'].map(class_to_idx)
         res_df = res_df.drop(columns=['class', 'width', 'height'])
         return res_df, class_to_idx
+    
+    def GetDataframeForModel(self):
+        res_df =pd.DataFrame(self.__image_data)
+        res_df['fname'] = res_df['fname'].apply(lambda x: os.path.join(self.__dir, x))
+        res_df = res_df.drop(columns=['width', 'height'])
+        return res_df
+
 
 class RSNAModel(nn.Module):
     def __init__(self, num_classes=2):
@@ -273,6 +302,14 @@ class Train:
         best_model.load_state_dict(self.__best_model_weights)
         return (self.__best_model_number, best_model)
     
+
+def get_result_from_test(df, class_idx):
+    label_to_class = {v: k for k, v in class_idx.items()}
+    df['label'] = df['label'].map(label_to_class)
+    df['fname'] = df['fname'].apply(os.path.basename)
+    df.rename(columns={"fname":"index"}, inplace=True)
+    return df
+
 
 def train_one_epoch(model, train_dataloader, optimizer, loss_fn, epoch, device, log_wandb=True, verbose=False):
     model.train()

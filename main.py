@@ -9,13 +9,14 @@ from torchvision import transforms
 import torch
 import numpy as np
 import torch.nn as nn
+import json
 
 MIN_ARGS_NUM=2
 
 if __name__ == "__main__":
 
     log.basicConfig(
-        level=log.DEBUG,           # Уровень регистрации сообщений
+        level=log.INFO,           # Уровень регистрации сообщений
         format='%(asctime)s [%(levelname)s]: %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'    # Формат даты и времени
     )
@@ -44,10 +45,10 @@ if __name__ == "__main__":
     log.info("Total in df: %s" % len(dataDf))
     log.info("Classes in percents:\n%s" % (dataDf["class"].value_counts(normalize=True) * 100))
     log.info("Resolution statistic:\n%s" % (dataDf[['width', 'height']].describe()))
-    log.info("Resolutions width: %s" % dataDf['width'].value_counts())
-    log.info("Resolutions height: %s" % dataDf['height'].value_counts())
-    log.info("Resolutions width percents: %s" % (dataDf['width'].value_counts(normalize=True) * 100))
-    log.info("Resolutions height precents: %s" % (dataDf['height'].value_counts(normalize=True) * 100))
+    log.debug("Resolutions width: %s" % dataDf['width'].value_counts())
+    log.debug("Resolutions height: %s" % dataDf['height'].value_counts())
+    log.debug("Resolutions width percents: %s" % (dataDf['width'].value_counts(normalize=True) * 100))
+    log.debug("Resolutions height precents: %s" % (dataDf['height'].value_counts(normalize=True) * 100))
     
     log.info("Try to change resolution:")
     if dataAnalys.ChangeResolutionTo(46, 66, "backups") == False:
@@ -56,7 +57,7 @@ if __name__ == "__main__":
     
     
     pyTorchDf, class_idx = dataAnalys.GetDataframeForPyTorch()
-    print(pyTorchDf)
+    log.info("Class idx: %s" % class_idx)
     
     train_df, val_df = train_test_split(pyTorchDf, test_size=0.3)
     
@@ -82,8 +83,8 @@ if __name__ == "__main__":
     
     # Проверка одного батча
     images, labels = next(iter(train_loader))
-    print(f"Batch shape: {images.shape}")
-    print(f"Labels: {labels}")
+    log.info(f"Batch shape: {images.shape}")
+    log.info(f"Labels: {labels}")
     
     # Визуализация
     import matplotlib.pyplot as plt
@@ -116,11 +117,17 @@ if __name__ == "__main__":
         val_loss, val_acc = train.valid_one_epoch(epoch, verbose=True)
         train.update_result(epoch, train_loss, train_acc, val_loss, val_acc)
         
-    print("Result:\n%s" % train.get_result_df())
+    log.info("Result:\n%s" % train.get_result_df())
     
     # Сохраняем лучшую модель
     model_num, best_model = train.get_best_model()
-    print("The best model is: %d" % model_num)
+    log.info("The best model is: %d" % model_num)
     torch.save(best_model.state_dict(), "best_model.pth")
-    
+
+    try:
+        with open("class.idx", "w") as class_idx_file:
+            json.dump(class_idx, class_idx_file)
+    except Exception as exp:
+        log.error("Can't save the class.idx - %s" % exp)
+
     log.info("End ML lamode")
